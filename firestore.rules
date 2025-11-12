@@ -1,0 +1,259 @@
+/**
+ * @fileoverview Firestore Security Rules for the application.
+ *
+ * Core Philosophy:
+ * This ruleset enforces a strict user-ownership model for user-specific data
+ * (projects, budgets, project details, customer payments) nested under the `/users/{userId}`
+ * path.  It also grants authenticated access to other collections containing potentially public data (expenses, customers, partners, partner shops, payment types).
+ * **CRITICAL**: Root level listing is denied to all users to prevent privilege escalation.
+ *
+ * Data Structure:
+ * - All user-specific data is nested under `/users/{userId}/...`.
+ * - Projects: `/users/{userId}/projects/{projectId}`
+ * - Project Details: `/users/{userId}/projects/{projectId}/details/{projectDetailId}`
+ * - Customer Payments: `/users/{userId}/projects/{projectId}/customerPayments/{customerPaymentId}`
+ * - Budgets: `/users/{userId}/budgets/{budgetId}`
+ * - Other collections (expenses, customers, partners, partner shops, payment types)
+ * are top-level.
+ *
+ * Key Security Decisions:
+ * - Listing the entire database is forbidden. This prevents unauthorized data discovery.
+ * - User-owned data is strictly controlled; only the owner can create, read, update, or delete.
+ * - Other collections are accessible to any signed-in user.
+ *
+ * Denormalization for Authorization:
+ *  - User-specific data includes the `userId` in the path, which is used for authorization.
+ *  - No additional denormalization is required as the path itself provides the necessary
+ *  information for authorization.
+ *
+ * Structural Segregation:
+ *  - Private user data and potentially public data are stored in separate collections,
+ *  allowing for different security postures.
+ */
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /**
+     * @description Prevents listing the entire database.
+     * @path /databases/{database}/documents
+     * @allow (list) This rule will never permit a list operation at the root.
+     * @deny (list) Any attempt to list documents at the root level.
+     * @principle Protects against unauthorized data discovery by denying root-level list operations.
+     */
+    match /{document=**} {
+        allow list: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isExistingOwner(userId) {
+        return isOwner(userId) && resource != null;
+    }
+
+    /**
+     * @description Manages project data specific to a user. Path-based ownership enforced. Includes denormalized 'userId' for authorization independence.
+     * @path /users/{userId}/projects/{projectId}
+     * @allow (create) Signed-in user with matching userId in path and request.auth.uid can create.
+     * @allow (get) Signed-in user with matching userId can read.
+     * @allow (update) Signed-in user with matching userId can update.
+     * @allow (delete) Signed-in user with matching userId can delete.
+     * @deny (create) Signed-in user with non-matching userId cannot create.
+     * @deny (get) Signed-in user with non-matching userId cannot read.
+     * @deny (update) Signed-in user with non-matching userId cannot update.
+     * @deny (delete) Signed-in user with non-matching userId cannot delete.
+     * @principle Enforces document ownership for all operations.
+     */
+    match /users/{userId}/projects/{projectId} {
+      allow create: if isSignedIn() && isOwner(userId) && request.resource.data.id == projectId;
+      allow get: if isSignedIn() && isOwner(userId);
+      allow list: if isSignedIn() && isOwner(userId);
+      allow update: if isExistingOwner(userId) && request.resource.data.id == resource.data.id;
+      allow delete: if isExistingOwner(userId);
+    }
+
+    /**
+     * @description Manages project detail data related to a project owned by a user. Path-based ownership enforced. Includes denormalized 'userId' and 'projectId' for authorization independence.
+     * @path /users/{userId}/projects/{projectId}/details/{projectDetailId}
+     * @allow (create) Signed-in user with matching userId in path and request.auth.uid can create.
+     * @allow (get) Signed-in user with matching userId can read.
+     * @allow (update) Signed-in user with matching userId can update.
+     * @allow (delete) Signed-in user with matching userId can delete.
+     * @deny (create) Signed-in user with non-matching userId cannot create.
+     * @deny (get) Signed-in user with non-matching userId cannot read.
+     * @deny (update) Signed-in user with non-matching userId cannot update.
+     * @deny (delete) Signed-in user with non-matching userId cannot delete.
+     * @principle Enforces document ownership for all operations.
+     */
+    match /users/{userId}/projects/{projectId}/details/{projectDetailId} {
+      allow create: if isSignedIn() && isOwner(userId) && request.resource.data.id == projectDetailId;
+      allow get: if isSignedIn() && isOwner(userId);
+      allow list: if isSignedIn() && isOwner(userId);
+      allow update: if isExistingOwner(userId) && request.resource.data.id == resource.data.id;
+      allow delete: if isExistingOwner(userId);
+    }
+
+    /**
+     * @description Manages customer payment data related to a project owned by a user. Path-based ownership enforced. Includes denormalized 'userId' and 'projectId' for authorization independence.
+     * @path /users/{userId}/projects/{projectId}/customerPayments/{customerPaymentId}
+     * @allow (create) Signed-in user with matching userId in path and request.auth.uid can create.
+     * @allow (get) Signed-in user with matching userId can read.
+     * @allow (update) Signed-in user with matching userId can update.
+     * @allow (delete) Signed-in user with matching userId can delete.
+     * @deny (create) Signed-in user with non-matching userId cannot create.
+     * @deny (get) Signed-in user with non-matching userId cannot read.
+     * @deny (update) Signed-in user with non-matching userId cannot update.
+     * @deny (delete) Signed-in user with non-matching userId cannot delete.
+     * @principle Enforces document ownership for all operations.
+     */
+    match /users/{userId}/projects/{projectId}/customerPayments/{customerPaymentId} {
+      allow create: if isSignedIn() && isOwner(userId) && request.resource.data.id == customerPaymentId;
+      allow get: if isSignedIn() && isOwner(userId);
+      allow list: if isSignedIn() && isOwner(userId);
+      allow update: if isExistingOwner(userId) && request.resource.data.id == resource.data.id;
+      allow delete: if isExistingOwner(userId);
+    }
+
+    /**
+     * @description Stores expense data. Accessible to all authenticated users.
+     * @path /expenses/{expenseId}
+     * @allow (create) Any signed-in user can create.
+     * @allow (get) Any signed-in user can read.
+     * @allow (list) Any signed-in user can list.
+     * @allow (update) Any signed-in user can update.
+     * @allow (delete) Any signed-in user can delete.
+     * @deny (create) Unsigned-in user cannot create.
+     * @deny (get) Unsigned-in user cannot read.
+     * @deny (list) Unsigned-in user cannot list.
+     * @deny (update) Unsigned-in user cannot update.
+     * @deny (delete) Unsigned-in user cannot delete.
+     * @principle Authenticated access for all operations.
+     */
+    match /expenses/{expenseId} {
+      allow create: if isSignedIn();
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow update: if isSignedIn() && resource != null;
+      allow delete: if isSignedIn() && resource != null;
+    }
+
+    /**
+     * @description Stores budget data specific to a user. Path-based ownership enforced. Includes denormalized 'userId' for authorization independence.
+     * @path /users/{userId}/budgets/{budgetId}
+     * @allow (create) Signed-in user with matching userId in path and request.auth.uid can create.
+     * @allow (get) Signed-in user with matching userId can read.
+     * @allow (update) Signed-in user with matching userId can update.
+     * @allow (delete) Signed-in user with matching userId can delete.
+     * @deny (create) Signed-in user with non-matching userId cannot create.
+     * @deny (get) Signed-in user with non-matching userId cannot read.
+     * @deny (update) Signed-in user with non-matching userId cannot update.
+     * @deny (delete) Signed-in user with non-matching userId cannot delete.
+     * @principle Enforces document ownership for all operations.
+     */
+    match /users/{userId}/budgets/{budgetId} {
+      allow create: if isSignedIn() && isOwner(userId) && request.resource.data.id == budgetId;
+      allow get: if isSignedIn() && isOwner(userId);
+      allow list: if isSignedIn() && isOwner(userId);
+      allow update: if isExistingOwner(userId) && request.resource.data.id == resource.data.id;
+      allow delete: if isExistingOwner(userId);
+    }
+
+    /**
+     * @description Stores customer data. Accessible to all authenticated users.
+     * @path /customers/{customerId}
+     * @allow (create) Any signed-in user can create.
+     * @allow (get) Any signed-in user can read.
+     * @allow (list) Any signed-in user can list.
+     * @allow (update) Any signed-in user can update.
+     * @allow (delete) Any signed-in user can delete.
+     * @deny (create) Unsigned-in user cannot create.
+     * @deny (get) Unsigned-in user cannot read.
+     * @deny (list) Unsigned-in user cannot list.
+     * @deny (update) Unsigned-in user cannot update.
+     * @deny (delete) Unsigned-in user cannot delete.
+     * @principle Authenticated access for all operations.
+     */
+    match /customers/{customerId} {
+      allow create: if isSignedIn();
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow update: if isSignedIn() && resource != null;
+      allow delete: if isSignedIn() && resource != null;
+    }
+
+    /**
+     * @description Stores partner data. Accessible to all authenticated users.
+     * @path /partners/{partnerId}
+     * @allow (create) Any signed-in user can create.
+     * @allow (get) Any signed-in user can read.
+     * @allow (list) Any signed-in user can list.
+     * @allow (update) Any signed-in user can update.
+     * @allow (delete) Any signed-in user can delete.
+     * @deny (create) Unsigned-in user cannot create.
+     * @deny (get) Unsigned-in user cannot read.
+     * @deny (list) Unsigned-in user cannot list.
+     * @deny (update) Unsigned-in user cannot update.
+     * @deny (delete) Unsigned-in user cannot delete.
+     * @principle Authenticated access for all operations.
+     */
+    match /partners/{partnerId} {
+      allow create: if isSignedIn();
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow update: if isSignedIn() && resource != null;
+      allow delete: if isSignedIn() && resource != null;
+    }
+
+    /**
+     * @description Stores partner shop data. Accessible to all authenticated users.
+     * @path /partnerShops/{partnerShopId}
+     * @allow (create) Any signed-in user can create.
+     * @allow (get) Any signed-in user can read.
+     * @allow (list) Any signed-in user can list.
+     * @allow (update) Any signed-in user can update.
+     * @allow (delete) Any signed-in user can delete.
+     * @deny (create) Unsigned-in user cannot create.
+     * @deny (get) Unsigned-in user cannot read.
+     * @deny (list) Unsigned-in user cannot list.
+     * @deny (update) Unsigned-in user cannot update.
+     * @deny (delete) Unsigned-in user cannot delete.
+     * @principle Authenticated access for all operations.
+     */
+    match /partnerShops/{partnerShopId} {
+      allow create: if isSignedIn();
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow update: if isSignedIn() && resource != null;
+      allow delete: if isSignedIn() && resource != null;
+    }
+
+    /**
+     * @description Stores payment type data. Accessible to all authenticated users.
+     * @path /paymentTypes/{paymentTypeId}
+     * @allow (create) Any signed-in user can create.
+     * @allow (get) Any signed-in user can read.
+     * @allow (list) Any signed-in user can list.
+     * @allow (update) Any signed-in user can update.
+     * @allow (delete) Any signed-in user can delete.
+     * @deny (create) Unsigned-in user cannot create.
+     * @deny (get) Unsigned-in user cannot read.
+     * @deny (list) Unsigned-in user cannot list.
+     * @deny (update) Unsigned-in user cannot update.
+     * @deny (delete) Unsigned-in user cannot delete.
+     * @principle Authenticated access for all operations.
+     */
+    match /paymentTypes/{paymentTypeId} {
+      allow create: if isSignedIn();
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow update: if isSignedIn() && resource != null;
+      allow delete: if isSignedIn() && resource != null;
+    }
+  }
+}
